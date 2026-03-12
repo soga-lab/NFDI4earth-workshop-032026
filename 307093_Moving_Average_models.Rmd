@@ -1,0 +1,117 @@
+---
+date: "September 2022"
+output:
+  html_document
+---
+
+```{r setup, include=FALSE}
+pacman::p_unload(pacman::p_loaded(), character.only = TRUE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.align = "center")
+
+default.par <- par(no.readonly = T)
+
+# function to generate column separated numbers
+n.format <- function(x) {
+  formatC(x, format = "d", big.mark = ",")
+}
+
+# set to English
+Sys.setlocale("LC_TIME", "C")
+
+```
+
+
+
+
+The moving average process of order $q$ is denoted MA$(q)$ and defined by
+
+$$y_t = w_t+\theta_1w_{t-1}+...+\theta_qw_{t-q},$$
+which can be rewritten as 
+
+$$y_t = \sum_{j=0}^q\theta_jw_{t-j},$$
+
+where $\theta_0 =1$, $\theta_1, \theta_2, ..., \theta_q$ are fixed constants, and  $w_t$ denotes a random variable with mean $0$ and variance $\sigma^2$. In the MA model the current value of the series is a weighted sum of past white noise terms. Think of the white noise series as being stochastically uncorrelated information which appears at each time step, and which is combined with other information to provide the observation at $y_t$. Hence, moving average models are useful for modeling series that are affected by a variety of unpredictable events where the effect of these events have an immediate effect as well as possible long-term effects.
+
+The moving average process is a stationary process with serial correlation zero at lags greater than $q$. 
+
+$$
+\gamma(k) = 
+\begin{cases}
+0,  & \vert k\vert > q \\
+\sigma^2\sum_{j=0}^{q-\vert k\vert}\theta_j\theta_{j+k} & \vert k\vert \le q
+\end{cases}
+$$
+
+
+In R, we can generate a moving average series by applying the `filter()` function on a white noise series.
+
+```{r}
+set.seed(250)
+
+## white noise series
+w <- rnorm(n = 200, mean = 0, sd = 1)
+
+## moving average
+y_ma <- stats::filter(w, rep(1 / 3, 3))
+plot.ts(y_ma, main = "Moving Average Series", ylab = "")
+```
+Another, very convenient way to simulate moving average processes in R is to use the `arima.sim()` function. 
+
+We generate two MA(1) series of the form
+
+$$y_t = w_t+\theta_1w_{t-1}\text{,}$$
+
+where once $\theta_1 = 0.6$ and the other time $\theta_1 = -0.6$.
+
+```{r}
+ma1_1 <- arima.sim(list(order = c(0, 0, 1), ma = 0.6), n = 100)
+ma1_2 <- arima.sim(list(order = c(0, 0, 1), ma = -0.6), n = 100)
+```
+
+We plot the two series using the `autolplot()` function.
+
+
+```{r, message=FALSE, warning=FALSE}
+library(ggfortify)
+library(gridExtra)
+
+p1 <- autoplot(ma1_1,
+  ylab = "y",
+  main = (expression(MA(1) ~ ~ ~ theta == 0.6))
+)
+
+p2 <- autoplot(ma1_2,
+  ylab = "y",
+  main = (expression(MA(1) ~ ~ ~ theta == -0.6))
+)
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+For $\theta = 0.6$, $y_t$  and $y_{t-1}$ are positively correlated, and for $\theta = -0.6$, $y_t$  and $y_{t-1}$ are negatively correlated. This correlational structure  can be shown by plotting the correlogram. 
+
+
+```{r warning=FALSE}
+p1 <- autoplot(acf(ma1_1, plot = FALSE)) +
+  ggtitle(expression("Serial Correlation " * MA(1) ~ ~ ~ theta == 0.6)) +
+  xlim(1, 20) +
+  ylim(-0.5, 0.5)
+
+p2 <- autoplot(acf(ma1_2, plot = FALSE)) +
+  ggtitle(expression("Serial Correlation " * MA(1) ~ ~ ~ theta == -0.6)) +
+  xlim(1, 20) +
+  ylim(-0.5, 0.5)
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+A typical feature of the autocorrelation function of a MA process is that it drops to nearly zero beyond $q$.
+
+
+
+```{r, echo = F}
+library("htmltools")
+includeHTML("https://userpage.fu-berlin.de/soga/soga-r/citation/citation.html")
+```
+

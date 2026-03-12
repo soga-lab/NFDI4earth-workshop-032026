@@ -1,0 +1,444 @@
+---
+date: "September 2022"
+output:
+  html_document
+---
+
+```{r setup, include=FALSE}
+
+pacman::p_unload(pacman::p_loaded(), character.only = TRUE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.align = "center")
+
+default.par <- par(no.readonly = T)
+
+# function to generate column separated numbers
+n.format <- function(x) {
+  formatC(x, format = "d", big.mark = ",")
+}
+
+# set to English
+Sys.setlocale("LC_TIME", "C")
+
+```
+
+
+[Hyndman and Athanasopoulos (2013)](https://www.otexts.org/fpp/){target="_blank"} outline the general approach for fitting an ARIMA model to a set of time series data.
+
+1. Plot the data. Identify any unusual observations.  
+
+2. If necessary, transform the data (e.g. [log transformations](https://www.geo.fu-berlin.de/en/v/soga-r/Advances-statistics/Feature-scales/Non_Linear_transformations/index.html){target="_blank"}, [logistic transformation](https://www.geo.fu-berlin.de/en/v/soga-r/Advances-statistics/Feature-scales/transformations_for_double_contraint_intervals/index.html){target="_blank"}, etc.) to stabilize the variance.  
+
+3. If the data is non-stationary: take first differences of the data until the data are stationary.  
+
+4. Examine the ACF/PACF: Which AR($p$), MA($q$), ARMA($p, q$) or ARIMA($p, d, q$) model is appropriate?  
+
+5. Choose a model and then use the [$AICc$](https://en.wikipedia.org/wiki/Akaike_information_criterion#AICc){target="_blank"} as a criterion to search for a better model. (cf. [Intro of AIC in MLR](https://www.geo.fu-berlin.de/en/v/soga-r/Advances-statistics/Multivariate-approaches/Multiple-linear-regression/Advanced-example/Regression-modelling-and-model-selection/index.html))
+
+6.  Check the residuals from the chosen model by plotting the ACF of the residuals, and doing a [*portmanteau test*](https://en.wikipedia.org/wiki/Portmanteau_test){target="_blank"} of the residuals. If they do not look like white noise, try a modified model.  
+
+7. Once the residuals look like white noise, calculate forecasts.  
+
+
+***
+
+#### The data
+
+For the sake of demonstration we fit a model to the *global annual temperature anomalies* (`t_global`) provided by the [Berkeley Earth Surface Temperature Study](http://berkeleyearth.org/summary-of-findings/){target="_blank"}. Temperatures are given in Celsius and are reported as anomalies relative to the period January 1951 to December 1980 average. Revisit the section on *data sets used* to remind yourself how we downloaded and extracted the data set of interest.
+
+```{r}
+load(url("https://userpage.fu-berlin.de/soga/data/r-data/Earth_Surface_Temperature.RData"))
+
+str(t_global)
+```
+
+We see that the data set consist of monthly mean temperatures.
+
+> **Exercise**: Aggregate the data (`t_global`) to annual means using the `apply.yearly()` function.
+
+
+```{r ex52, eval=F, message=FALSE, warning=FALSE}
+## Your code here ...
+library(xts)
+t_global_year <- NULL
+```
+
+<details>
+  <summary>Show code</summary>
+```{r, eval=FALSE, warning=FALSE, message=FALSE}
+library(xts)
+t_global_year <- apply.yearly(t_global, mean)
+```
+</details>
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(xts)
+t_global_year <- apply.yearly(t_global, mean)
+```
+\
+Then, we split the data set into two parts. One part, the *training set*, is the period 1850 to 2000. Based on that data set we learn the model parameters. The other part, the *test set*, is the period 2001 to 2016. This part is used to validate our model, as we compare the model forecast with the observations. 
+
+> **Exercise**: Subset the time series (`t_global_year`) to the period 1850 to 2000 as training data set and to the period 2001 to 2016 as test data set. Calculate the annual means.
+
+
+```{r ex53, eval=F}
+## Your code here...
+temp_global <- NULL # period 1850 to 2000
+temp_global_test <- NULL # period 2001 to 2016
+```
+
+<details>
+  <summary>Show code</summary>
+```{r, eval=FALSE}
+temp_global <- t_global_year["1850/2000", "Monthly_Anomaly_Global"]
+```
+
+
+```{r eval=FALSE}
+temp_global_test <- t_global_year["2001/2016", "Monthly_Anomaly_Global"]
+```
+
+```{r, eval=FALSE, message=FALSE, warning=FALSE}
+library(xts)
+t_global <- apply.yearly(t_global, mean)
+```
+</details>
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+temp_global <- t_global_year["1850/2000", "Monthly_Anomaly_Global"]
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+temp_global_test <- t_global_year["2001/2016", "Monthly_Anomaly_Global"]
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(xts)
+t_global <- apply.yearly(t_global, mean)
+```
+Let us plot the data and identify any unusual observations.
+
+
+```{r}
+plot.zoo(cbind(
+  temp_global,
+  temp_global_test
+),
+plot.type = "single",
+col = c("black", "gray"),
+main = "Earth Surface Temperature Anomalies",
+ylab = "", xlab = ""
+)
+legend("topleft",
+  legend = c(
+    "training set 1850 - 2000",
+    "test set 2001 - 2016"
+  ),
+  col = c("black", "gray"),
+  lty = 1, cex = 0.65
+)
+```
+
+It seems that there are no outliers or unusual observation in the data set. 
+
+***
+#### Data transformation
+
+With respect to the plot above it does not seem that the variation increases or decreases with the level of the time series. Thus, probably no transformation is required. However, just as a sanity check we apply a [*Box-Cox transformation*](https://en.wikipedia.org/wiki/Power_transform){target="_blank"} using the `BoxCox()` function in R and plot the transformed data against the original data. 
+
+The Box-Cox transformation is defined as follows:
+
+$$
+w_t =
+\begin{cases}
+log(y_t)  & \text{if } \lambda=0 \\
+(y_t^{\lambda}-1)/\lambda & \text{otherwise}
+\end{cases}
+$$
+The Box-Cox transformation depends on the parameter $\lambda$. So if $\lambda =0$ the natural logarithm is  used, but if $\lambda \ne0$, a power transformation is used followed by some simple scaling. We can make use of the `BoxCox.lambda()` function, which chooses the value of $\lambda$, which minimizes the [coefficient of variation](https://en.wikipedia.org/wiki/Coefficient_of_variation){target="_blank"}.
+
+```{r, message=FALSE, warning=FALSE}
+library(forecast)
+lambda <- BoxCox.lambda(temp_global)
+lambda
+```
+
+We use the given $\lambda$ to transform our data and plot the transformed time series against the original time series.
+
+
+
+```{r}
+# transformed time series
+temp_global_BC <- BoxCox(temp_global, lambda)
+
+plot.zoo(cbind(
+  temp_global,
+  temp_global_BC
+),
+col = c("black", "gray"),
+main = "Original vs. Box-Cox transformed time series",
+ylab = "", xlab = ""
+)
+```
+
+The Box-Cox transformed time series (gray line) does not differ significantly from the original time series (black line). Hence, we continue our analysis with the original time series data. 
+
+
+***
+
+#### Stationary check
+
+Fitting an ARIMA model requires the series to be stationary, which means that the *mean*, *variance*, and *autocovariance* of the series are time invariant. Based on our domain knowledge and the visualization  of the time series data we are quite sure that the temperature time series is not stationary. 
+
+As a proof of concept we apply the [**Kwiatkowski-Phillips-Schmidt-Shin (KPSS)**](https://en.wikipedia.org/wiki/KPSS_test){target="_blank"} test. Recall, the null hypothesis in a KPSS test is that a time series is stationary.
+
+$H_0:\text{The time series is trend-stationary.}$
+
+$H_A:\text{The time series is not trend-stationary.}$
+
+```{r, message=FALSE, warning=FALSE}
+library(tseries)
+kpss.test(temp_global)
+```
+
+The *p*-value of the KPSS test on the original data set (`temp_global`) is $p<0.01$. Hence we reject $H_0$ in favor of $H_A$; the original time series is **not** trend-stationary.
+
+A non-stationary series can be corrected by a simple transformation such as differencing. Recall that the difference $(\Delta y_t)$ is calculated by subtracting one period's values from the previous period's values. Let us apply the `diff()` function and compute the KPSS test for the differenced time series.
+
+> **Exercise**: Difference the `temp_global` time series and apply a KPSS test on the differenced time series.
+
+```{r ex54, eval=F}
+## Your code here...
+temp_global_diff1 <- NULL
+```
+
+<details>
+  <summary>Show code</summary>
+```{r, eval=FALSE}
+temp_global_diff1 <- diff(temp_global)
+kpss.test(temp_global_diff1)
+```
+</details>
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+temp_global_diff1 <- diff(temp_global)
+kpss.test(temp_global_diff1)
+```
+
+The *p*-value of the KPSS test on the differenced data set (`temp_global_diff1`) is $p>0.1$. Hence we would not reject $H_0$ in favor of $H_A$; the differenced time series is trend-stationary.
+
+Let us plot the differenced data set.
+
+```{r}
+plot(temp_global_diff1)
+```
+
+Nice, the trend is gone. Let us plot the autocorrelation function to review the correlational structure of the time series. This time we use the `Acf()` function from the `forecast` package. The function ships with some improvements compared to the `acf()` function from base R, but essentially these two functions are the same. 
+
+```{r}
+Acf(temp_global_diff1,
+  main = "ACF for Differenced Series"
+)
+```
+
+The plot shows significant spikes at a lag of 1, 3 and 4 years. 
+
+
+***
+
+#### Examine the ACF/PACF
+
+In the next step, we need to identify a time series model. We need to find out which AR($p$), MA($q$), ARMA($p, q$) or ARIMA($p, d, q$) model is appropriate for our data set.
+
+We have seen that it is possible to distinguish between AR, MA and ARMA models by the behavior of their ACF and PACF functions. If the ACF exhibits slow decay and the PACF cuts off sharply after lag $p$, we would identify the series as AR($p$). If the PACF shows slow decay and the ACF show a sharp cutoff after lag $q$, we would identify the series as being MA($q$). If both the ACF and PACF show slow decay we would identify the series as being mixed ARMA.
+
+The theoretical behavior of ACF and PACF for ARMA models is summarized below ([Shumway and Stoffer 2011](http://www.springer.com/gp/book/9783319524511){target="_blank"} and [Wei 2006](http://civil.colorado.edu/~balajir/CVEN6833/lectures/wwts-book.pdf){target="_blank"}).
+
+$$
+\begin{array}{l|lll}
+ & \text{AR}(p) & \text{MA}(q) & \text{ARMA}(p,q) \\
+\hline
+\text{ACF} & \text{Tails off}^\text{1} & \text{Cuts off after lag }q & \text{Tails off after lag (}q-p\text{)} \\
+\text{PACF} & \text{Cuts off after lag }p &  \text{Tails off}^\text{1}  & \text{Tails off after lag (}p-q\text{)}\\
+\hline
+\end{array}
+$$
+_$^\text{1}$Tails off as exponential decay or damped sine wave._
+
+
+It should be noted that the sampling variation and the correlation among the sample ACF and PACF often disguise the theoretical ACF and PACF patterns. Hence, in the initial model identification it is recommendable to concentrate on the general broad features of these sample ACF and PACF. Model improvement can be easily achieved at a later stage of diagnostic checking ([Wei 2006](https://astro.temple.edu/~wwei/book.html){target="_blank"}).
+
+
+Let us plot the ACF and PACF and try to figure out the appropriate model configuration.
+
+
+```{r, message=FALSE, warning=FALSE}
+library(ggfortify)
+library(gridExtra)
+
+## ACF
+p1 <- autoplot(Acf(temp_global_diff1,
+  plot = FALSE,
+  lag.max = 15
+)) + ggtitle("ACF") + xlim(1, 15) + ylim(-0.4, 0.4)
+
+## PACF
+p2 <- autoplot(Acf(temp_global_diff1,
+  plot = FALSE,
+  lag.max = 15,
+  type = "partial"
+)) + ggtitle("PACF")
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+It seems that the ACF behaves like a damped sine wave and that the PACF cuts off after lag $p=3$ in ACF. This is suggesting an ARIMA(3, 1, 0) process. 
+
+
+***
+
+#### Model selection
+
+In R we fit an ARIMA model using the `Arima()` function from the `forecast` package. There is another function `arima()` in base R which also fits an ARIMA model. However, its functionality is not optimized for the usage with the `forecast` package, hence, for the purpose of this tutorial it is recommended that you use `Arima()`.
+
+Let us fit an ARIMA(3, 1, 0) and print out the model summary. Note that we feed the original time series (`temp_global`) into our model.
+
+```{r}
+fit <- Arima(temp_global, order = c(3, 1, 0))
+summary(fit)
+```
+
+This is an ARIMA(3, 1, 0) model written as 
+
+```{r, include=FALSE}
+c_ar3 <- round(coefficients(fit), 4)
+sigma_ar3 <- round(fit$sigma2, 4)
+names(fit)
+```
+
+
+$\Delta y_t = `r c_ar3[1]`y_{t-1}`r c_ar3[2]`y_{t-2}`r c_ar3[3]`y_{t-3}+ w_t\text{,}$
+
+where $w_t$ is white noise with a standard deviation of $\sqrt{`r sigma_ar3`} = `r round(sqrt(sigma_ar3),3)`$.
+
+The corrected version of [Akaike information criterion $(AICc)$](https://en.wikipedia.org/wiki/Akaike_information_criterion#AICc){target="_blank"} of this model is $`r round(fit$aicc,2)`$. This model quality metric is useful when comparing different models. In ARIMA modelling it is good practice to check some more models and compare them by comparing the $AICc$.
+
+> **Exercise**: Fit some variations of ARIMA($p$, $d$, $q$) models including ARIMA(3, 1, 1), ARIMA(3, 1, 2), ARIMA(2, 1, 2) and compare their $AICc$.
+
+```{r ex55, eval=F}
+## Your code here...
+```
+
+<details>
+  <summary>Show code</summary>
+```{r, eval=FALSE}
+print(paste("ARIMA(3, 1, 0) - AICc: ", round(fit$aicc, 2)))
+fit_test_2 <- Arima(temp_global, order = c(3, 1, 1))
+print(paste("ARIMA(3, 1, 1) - AICc: ", round(fit_test_2$aicc, 2)))
+fit_test_3 <- Arima(temp_global, order = c(3, 1, 2))
+print(paste("ARIMA(3, 1, 2) - AICc: ", round(fit_test_3$aicc, 2)))
+fit_test_4 <- Arima(temp_global, order = c(2, 1, 2))
+print(paste("ARIMA(2, 1, 2) - AICc: ", round(fit_test_4$aicc, 2)))
+```
+
+Of these, the ARIMA(3, 1, 2) has the smallest $AICc$ value. That is so far our best model out of these four.
+
+</details>
+
+***
+
+The `forecast` package includes the `auto.arima()` function. The function uses a variation of the [*Hyndman and Khandakar algorithm*](https://robjhyndman.com/publications/automatic-forecasting/){target="_blank"} which combines [unit root tests](https://en.wikipedia.org/wiki/Unit_root_test){target="_blank"}, minimization of the [AICc](https://en.wikipedia.org/wiki/Akaike_information_criterion#AICc){target="_blank"} and [maximum likelihood estimation (MLE)](https://en.wikipedia.org/wiki/Maximum_likelihood_estimation){target="_blank"} to obtain an optimized ARIMA model. The `auto.arima()` generates a set of optimal ($p$, $d$, $q$) that optimizes model fit criteria by searching through combinations of order parameters.
+
+
+```{r}
+fit_auto <- auto.arima(temp_global, seasonal = FALSE)
+summary(fit_auto)
+```
+
+The `auto.arima()` function returns an ARIMA(1, 1,1 ) process with drift, with an $AICc$ of `r round(fit_auto$aicc,2)`. This metric is slightly lower compared to our best model so far.
+
+
+***
+
+#### Check the residuals
+
+Now let us check the residuals from our chosen model.
+
+> **Exercise**: Plot the ACF of the residuals from the `fit_auto` model.
+
+```{r ex56, eval=F}
+## Your code here...
+```
+
+<details>
+  <summary>Show code</summary>
+```{r, eval=FALSE}
+Acf(residuals(fit_auto))
+```
+</details>
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+Acf(residuals(fit_auto))
+```
+The ACF plot of the residuals from the ARIMA(1, 1, 3) model shows all correlations within the threshold limits (blue dashed lines) indicating that the residuals are behaving like white noise.
+
+
+In addition to considering the ACF plot, where we are implicitly carrying out multiple hypothesis tests, each one with a small probability of giving a false positive, we may apply a more formal test for autocorrelation. A [*portmanteau test*](https://en.wikipedia.org/wiki/Portmanteau_test){target="_blank"}, from a French word describing a suitcase containing a number of items, tests a group of autocorrelations ([Hyndman and Athanasopoulos, 2013](https://www.otexts.org/fpp/){target="_blank"}).
+
+One such test is the [*Ljung-Box*](https://en.wikipedia.org/wiki/Ljung%E2%80%93Box_test){target="_blank"} test based on the statistic 
+
+$$Q=T(T+2)\sum_{k=1}^h(T-k)^{-1}r^2_k\text{,}$$
+
+where $h$ is the maximum lag being considered, $T$ is number of observations, and $r_k$ is the autocorrelation for lag $k$.  If some $r_k$ values are large (positive or negative), then $Q$ will be large. If the autocorrelations did come from a white noise series, then both $Q$ would have a $\chi^2$ distribution with $(h-K)$ degrees of freedom where $K$ is the number of parameters in the model.  [Hyndman and Athanasopoulos (2013)](https://www.otexts.org/fpp/){target="_blank"} suggest using $h=10$ for non-seasonal data and $h=2m$ for seasonal data, where $m$ is the period of seasonality.
+
+
+
+**Ljung-Box test**
+
+$H_0: \text{The data is independently distributed.}$
+
+$H_A: \text{The data is not independently distributed, it exhibits serial correlation.}$
+
+
+```{r}
+B_test <- Box.test(residuals(fit_auto),
+  lag = 10,
+  fitdf = 6,
+  type = "Ljung"
+)
+B_test
+```
+
+```{r, include=FALSE}
+B_test_p <- B_test$p.value
+```
+
+
+The portmanteau test returns a large p-value ($P=`r round(B_test_p,4)`$), suggesting the residuals are white noise with $\alpha<0.01$ but also may exhibit serial correlation with $\alpha<0.05$. 
+
+
+***
+
+#### Calculate forecasts
+
+Forecasting using a fitted model is straightforward in R. We use the `forcast()` function from the `forecast` package. We specify forecast horizon in `h` periods ahead for predictions to be made, and use the fitted model to generate those predictions.
+
+```{r}
+# pot forecast
+temp_forecast <- forecast(fit_auto, h = 16)
+plot(temp_forecast)
+
+# plot test time series of the period 2001 - 2016
+lines(ts(coredata(temp_global_test),
+  start = start(temp_forecast$mean)[1],
+  frequency = 1
+), col = "magenta")
+```
+
+Forecast estimates are provided with confidence bounds: 80% confidence limits shaded in darker blue, and 95% in lighter blue. For stationary models (i.e., with $d=0$), forecast intervals converge, for $d>1$, the forecast intervals will continue to grow into the future.
+
+```{r, echo = F}
+library("htmltools")
+includeHTML("https://userpage.fu-berlin.de/soga/soga-r/citation/citation.html")
+```
+

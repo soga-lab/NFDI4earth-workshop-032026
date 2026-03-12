@@ -1,0 +1,65 @@
+---
+date: "September 2022"
+output:
+  html_document
+---
+
+```{r setup, include=FALSE}
+pacman::p_unload(pacman::p_loaded(), character.only = TRUE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.align = "center")
+
+default.par <- par(no.readonly = T)
+
+# function to generate column separated numbers
+n.format <- function(x) {
+  formatC(x, format = "d", big.mark = ",")
+}
+
+# set to English
+Sys.setlocale("LC_TIME", "C")
+
+```
+
+
+
+
+If the random variables which make up $y_t$ are uncorrelated, have means 0 and variance $\sigma^2$, then $y_t$ is stationary with an autocovariance function of
+
+$$
+\gamma_w(s,t) = \text{cov}(w_s, w_t)=
+\begin{cases}
+\sigma^2_w  & s=t \\
+0 & \text{otherwise.}
+\end{cases}
+$$
+
+This type of series is referred to as [**white noise**](https://en.wikipedia.org/wiki/White_noise){target="_blank"}. The designation *white* originates from the analogy with white light and indicates that all possible periodic oscillations are present with equal strength ([Shumway and Stoffer 2011](http://www.springer.com/gp/book/9783319524511){target="_blank"}).
+
+A particularly useful white noise series is *Gaussian white noise*, wherein the $w_t$ are independent and identically distributed (*iid*) normal random variables, with mean 0 and variance $\sigma^2$.
+
+
+$$w_t \sim \text{iid } N(0, \sigma^2_w) $$
+
+We may easily generate a Gaussian white noise in R using the `rnorm()` function.
+
+```{r}
+set_seed <- 133 # set seed for reproducibility
+w <- rnorm(n = 200, mean = 0, sd = 1)
+plot.ts(w, main = "Gaussian white noise series")
+```
+
+Let us plot the correlogram by using the `acf()` function. This time, however, for a more convenient visualization, we embed the `acf()` function into the `autoplot()` function provided by the `ggfortify` package.
+
+```{r, message=FALSE, warning=FALSE}
+library(ggfortify)
+autoplot(acf(w, plot = FALSE)) +
+  ggtitle("Serial Correlation of Gaussian white noise")
+```
+
+As expected, the autocorrelation for any lag from 1 to 25 is not different from zero, indicated by the blue dashed line. At lag 0 the autocorrelation is 1.
+
+```{r, echo = F}
+library("htmltools")
+includeHTML("https://userpage.fu-berlin.de/soga/soga-r/citation/citation.html")
+```
