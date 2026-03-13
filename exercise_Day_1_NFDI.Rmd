@@ -1,0 +1,166 @@
+---
+title: "Exercises NFDI4Earth"
+date: "2026-03-16"
+output:
+  html_document:
+    code_folding: hide
+---
+
+# Exercises 1. day of the NFDI4Earth workshop Berlin
+
+## 1. Feature scale Transformations for explorative statistics
+
+>**Load one of the following data sets.**
+Use the presented recipes for feature scale transformations for exploratory statistics (central tendency and dispersion) and visualize the the data in a meaningful manner (e.g. moments and/or sigma-invals, histogram, density plot, etc.)
+
+#### 1.1. Runoff data from gauge Diepoldsau, Rhine River, Switzerland!
+Data from the gauge Diepoldsau at the Rhine River in Switzerland, which is available at the website of the Federal Office for the Environment (FOEN) in Switzerland downloaded at https://www.gemstat.org
+
+```{r}
+
+data<-read.csv("https://userpage.fu-berlin.de/soga/data/workshop_data/Suspsolids.csv",sep = ";",comment.char = "#")
+# next we adress the variable types correctly:
+data$Susp_solids_mg_L = gsub(",", "", data$Susp_solids_mg_L)
+data$Susp_solids_mg_L<-as.numeric(data$Susp_solids_mg_L)
+data$DateTime<-as.POSIXct(as.character(data$DateTime),format = "%d.%m.%y  %H:%M") # here two spaces 
+
+# There are some missing values to remove:
+tss<-data$Susp_solids_mg_L[is.finite(data$Susp_solids_mg_L)] 
+Q<-data$Discharge_m3_s[is.finite(data$Susp_solids_mg_L)]
+
+```
+
+#### 1.2. Arctic sea ice data from the NSIDC (National Snow and Ice Data Center)
+
+at the University of Colorado in Boulder hosts and provides monthly sea ice data for both hemispheres from November 1978 to the present.
+```{r}
+N03<-read.csv("https://noaadata.apps.nsidc.org/NOAA/G02135/north/monthly/data/N_03_extent_v4.0.csv") # data for March
+N09<-read.csv("https://noaadata.apps.nsidc.org/NOAA/G02135/north/monthly/data/N_09_extent_v4.0.csv") # data for September
+
+
+```
+
+#### 1.3. German Meteorological Service DWD
+The German Meteorological Service (DWD) provides a wide range of meteorological data. We prepared a data set, where you can analyse e.g. "Altitude", "Max_Air_temperature"and, "Mean_annual_Rainfall" for 599 stations in Germany.
+
+```{r}
+dwd <- read.csv2("https://userpage.fu-berlin.de/soga/data/raw-data/DWD.csv",
+           stringsAsFactors = FALSE, sep = ",")
+# Exclude variables
+cols_to_drop <- c("ID",
+                  "DWD_ID",
+                  "STATION_NAME",
+                  "PERIOD") # columns to drop
+                  # kept federal state for task 2
+
+rows_to_drop <- complete.cases(dwd) # rows to drop
+dwd_data <- dwd[rows_to_drop, !(colnames(dwd) %in% cols_to_drop)]
+dwd_data[, 2:18] <- lapply(dwd_data[, 2:18], as.numeric)
+
+plot(dwd$ID,dwd_data$MEAN_ANNUAL_RAINFALL, main = "DWD-data: Mean annual rainfall", xlab = "Id", ylab ="Mean annual rainfall")
+
+```
+
+
+
+## 2. Feature scale Transformations for CI's and NHST
+
+#### 2.1. Runoff data from gauge Diepoldsau 
+
+>Compare the mean and median of the runoff and suspension load data for seasons May-July and September - November. Apply appropriate transformations and perform a t-test to compare the means of two groups (e.g., high vs. low discharge). Estimate confidence regions for population means of both discharge seasons!
+
+
+```{r}
+data_may = data[as.numeric(format(data$DateTime, "%m")) %in% 5:7, ]
+data_sep = data[as.numeric(format(data$DateTime, "%m")) %in% 9:11, ]
+
+nival_tss = data_may$Susp_solids_mg_L
+nival_Q = data_may$Susp_solids_mg_L
+
+pluvial_tss = data_sep$Susp_solids_mg_L
+pluvial_Q = data_sep$Susp_solids_mg_L
+
+# your code here #
+
+```
+
+#### 2.2. Arctic sea ice data from the NSIDC (National Snow and Ice Data Center)
+
+>Estimate the change of ice cover extent for the period 1978 to 1990 and 2010 to today for the months of March and September. Apply appropriate transformations and perform a t-test to compare the means of two groups (e.g., 1978-1990 vs. 2010-today). Estimate confidence regions for population means and their differences for both periods!
+
+```{r}
+N03extent78 = N03[N03$year<=1990,"extent"]
+N03extent10 = N03[N03$year>=2010,"extent"]
+N09extent78 = N09[N09$year<=1990,"extent"]
+N09extent10 = N09[N09$year>=2010,"extent"]
+
+# your code here #
+
+```
+
+
+#### 2.3. German Meteorological Service DWD
+
+> Compare variable  "Mean_annual_Rainfall" for the federal states of "Bayern" and "Niedersachsen". Apply appropriate transformations and perform a t-test to compare the means of two groups (e.g., high vs. low altitude). Estimate confidence regions for population means of both groups!
+
+```{r}
+
+# Bayern
+mrf_Bay <- dwd_data[dwd_data$FEDERAL_STATE == "Bayern", 12]
+
+# Niedersachsen
+mrf_Nie <- dwd_data[dwd_data$FEDERAL_STATE == "Niedersachsen", 12]
+
+# your code here #
+
+```
+
+
+## 3. Feature scale Transformations for robust correlation/ regression
+
+> Apply an appropriate feature scale transformation for the data sets. Calculate the correlation between two (given) variables of the transformed data. Choose a regression model and perform it! 
+
+#### 3.1. Runoff and suspension laod data from gauge Diepoldsau, Rhine River, Switzerland!
+
+>Estimate the dependency of the suspension from the discharge in snowmelt seasons and/or pluvial runoff season, by using an appropriate feature transformation and a suitable regression model.
+
+```{r}
+plot(data_may$DateTime, nival_tss, pch = 20, col = "blue",xlab = "Time",
+     ylab = "Suspended solids (mg/L)",
+     main = "Suspended solids over time")
+points(data_sep$DateTime, pluvial_tss, pch =20, col="orange")
+legend("topright",
+       legend = c("May–July", "September–November"),
+       pch = c(20, 20),
+       col = c("blue", "orange"))
+
+# your code here #
+
+```
+
+
+#### 3.2. Arctic sea ice data from the NSIDC (National Snow and Ice Data Center)
+
+> Examine the time dependency of the ice cover extent of either March or September data. Alternatively, you can test the limitations for the prediction of ice cover extent in September from March data.
+
+```{r}
+# Plot
+plot(N09$year,N09$extent,main="ice cover extent september",xlab = "Year",ylab = "million sqrkm", pch = 20, col = "blue")
+plot(N03$year,N03$extent,main="ice cover extent may",xlab = "Year",ylab = "million sqrkm", pch = 20, col = "red")
+
+# your code here #
+
+```
+
+#### 3.3. German Meteorological Service DWD
+
+> Examine the influence of station altitude on mean annual rainfall in Germany using a suitable Feature Scale Transformation respective model!
+```{r}
+plot(dwd_data$ALTITUDE,dwd_data$MEAN_ANNUAL_RAINFALL,
+     main = "Mean annual rainfall", 
+     ylab = "Mean annual rainfall in mm/m^2",
+     xlab = "Altitude")
+
+# your code here #
+
+```
