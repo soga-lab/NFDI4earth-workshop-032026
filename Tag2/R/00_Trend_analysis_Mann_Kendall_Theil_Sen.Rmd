@@ -1,0 +1,405 @@
+---
+title: "Trend Analysis: Mann-Kendall Test and Theil-Sen Slope"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+    highlight: tango
+    fig_width: 12
+    fig_height: 6
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Trend Analysis: Mann-Kendall Test and Theil-Sen Slope
+
+In time series analysis, detecting whether a monotonic trend exists in a data set is a fundamental task. Unlike regression-based trend detection, non-parametric methods do not require assumptions about the distribution of the data, making them especially suitable for environmental and geoscientific data that may contain outliers, missing values, or non-normal distributions.
+
+Two widely used non-parametric methods for trend analysis are:
+
+1. **Mann-Kendall Test** — a hypothesis test for the presence of a monotonic trend.
+2. **Theil-Sen Slope Estimator** — a robust estimator of the magnitude of the trend.
+
+These methods are frequently used in hydrology, climatology, and environmental sciences ([Helsel and Hirsch, 2002](https://pubs.usgs.gov/twri/twri4a3/); [Yue et al., 2002](https://doi.org/10.1002/joc.702)).
+
+***
+
+### The Mann-Kendall Test
+
+The [Mann-Kendall test](https://en.wikipedia.org/wiki/Kendall_rank_correlation_coefficient) is a non-parametric statistical test used to identify whether a monotonic upward or downward trend exists in a time series. It was originally proposed by [Mann (1945)](https://doi.org/10.2307/1907187) and later refined by [Kendall (1975)](https://en.wikipedia.org/wiki/Kendall_rank_correlation_coefficient).
+
+Given a time series $y_1, y_2, \ldots, y_n$, the Mann-Kendall test statistic $S$ is defined as:
+
+$$S = \sum_{k=1}^{n-1} \sum_{j=k+1}^{n} \text{sgn}(y_j - y_k)$$
+
+where the sign function is:
+
+$$
+\text{sgn}(x) =
+\begin{cases}
++1 & \text{if } x > 0 \\
+0 & \text{if } x = 0 \\
+-1 & \text{if } x < 0
+\end{cases}
+$$
+
+Under the null hypothesis $H_0$ (no trend), $S$ is approximately normally distributed with:
+
+- Mean: $E[S] = 0$
+- Variance: $\text{Var}(S) = \frac{n(n-1)(2n+5)}{18}$
+
+If there are tied groups, the variance is adjusted:
+
+$$\text{Var}(S) = \frac{n(n-1)(2n+5) - \sum_{p=1}^{g} t_p(t_p-1)(2t_p+5)}{18}$$
+
+where $g$ is the number of tied groups and $t_p$ is the number of data points in the $p$-th tied group.
+
+The standardized test statistic $Z$ is:
+
+$$
+Z =
+\begin{cases}
+\frac{S-1}{\sqrt{\text{Var}(S)}} & \text{if } S > 0 \\
+0 & \text{if } S = 0 \\
+\frac{S+1}{\sqrt{\text{Var}(S)}} & \text{if } S < 0
+\end{cases}
+$$
+
+A positive $Z$ indicates an upward trend, a negative $Z$ a downward trend. The null hypothesis is rejected if $|Z| > Z_{1-\alpha/2}$.
+
+***
+
+### The Theil-Sen Slope Estimator
+
+The [Theil-Sen slope estimator](https://en.wikipedia.org/wiki/Theil%E2%80%93Sen_estimator) (also known as Sen's slope) provides a robust estimate of the magnitude of a trend. It was proposed by [Theil (1950)](https://doi.org/10.1016/S1385-7258(50)50011-1) and extended by [Sen (1968)](https://doi.org/10.1080/01621459.1968.10480934).
+
+The Theil-Sen slope $\beta$ is defined as the **median** of all pairwise slopes:
+
+$$\beta = \text{median}\left(\frac{y_j - y_k}{j - k}\right), \quad \forall \; k < j$$
+
+Key properties:
+
+- It is **robust to outliers** — up to 29.3% of the data can be outliers without significantly affecting the estimate.
+- It does **not assume normality** of residuals.
+- It provides a **confidence interval** for the slope.
+
+The intercept is typically estimated as:
+
+$$\alpha = \text{median}(y_i) - \beta \cdot \text{median}(x_i)$$
+
+***
+
+### Load required libraries
+
+```{r libraries}
+library(dplyr)
+library(jsonlite)
+library(trend)       # Mann-Kendall test and Sen's slope
+library(ggplot2)
+library(mblm)        # Median-based linear models (Theil-Sen)
+```
+
+***
+
+### Mann-Kendall Test — Step-by-step implementation
+
+Let's use the same temperature anomaly data from the previous notebook to perform a Mann-Kendall test and estimate the Theil-Sen slope.
+
+```{r load-data}
+# Load global temperature anomaly data
+dataset <- fromJSON(
+  "http://userpage.fu-berlin.de/soga/soga-py/300/307000_time_series/t_global.json"
+)
+
+t_global <- data.frame(
+  Date = as.Date(unlist(dataset$Date), format = "%Y-%m-%d"),
+  Monthly_Anomaly_global = sapply(dataset$`Monthly Anomaly_global`, function(x) ifelse(is.null(x), NA, x))
+) |>
+mutate(Year = as.numeric(format(Date, "%Y")))
+
+
+# Compute annual mean anomaly
+y_df <- aggregate(`Monthly_Anomaly_global` ~ Year, data = t_global, FUN = mean)
+y_df <- y_df[y_df$Year >= 1850, ]
+colnames(y_df) <- c("Year", "Anomaly")
+
+# Plot the time series
+ggplot(y_df, aes(x = Year, y = Anomaly)) +
+  geom_line(color = "steelblue") +
+  labs(
+    title = "Earth Surface Temperature Anomalies",
+    x = "Year", y = "Anomaly (°C)"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+***
+
+### Using the `trend` package
+
+In practice, we typically use a well-tested library. The [`trend`](https://cran.r-project.org/package=trend) package provides several variants including the original Mann-Kendall test, the seasonal variant, and corrections for autocorrelation.
+
+```{r mk-test}
+# Create a time series object
+y_ts <- ts(y_df$Anomaly, start = min(y_df$Year), frequency = 1)
+
+# Original Mann-Kendall test
+mk_result <- mk.test(y_ts)
+
+cat("Mann-Kendall Test Results (trend package)\n")
+cat(strrep("=", 50), "\n")
+cat(sprintf("p-value:        %.6f\n", mk_result$p.value))
+cat(sprintf("Z statistic:    %.4f\n", mk_result$statistic))
+cat(sprintf("S statistic:    %.0f\n", mk_result$estimates["S"]))
+cat(sprintf("Kendall's tau:  %.4f\n", mk_result$estimates["tau"]))
+```
+
+The `trend` package also provides Sen's slope estimation alongside the test results — a convenient feature.
+
+***
+
+### Theil-Sen Slope — Step-by-step implementation
+
+Let us compute the Theil-Sen slope manually, and then compare with the `mblm` package.
+
+```{r theil-sen-manual}
+theil_sen_slope <- function(x, y) {
+  n <- length(x)
+  slopes <- c()
+
+  for (k in 1:(n - 1)) {
+    for (j in (k + 1):n) {
+      if (x[j] != x[k]) {
+        slopes <- c(slopes, (y[j] - y[k]) / (x[j] - x[k]))
+      }
+    }
+  }
+
+  slope <- median(slopes)
+  intercept <- median(y) - slope * median(x)
+
+  list(slope = slope, intercept = intercept, all_slopes = slopes)
+}
+
+result_manual <- theil_sen_slope(y_df$Year, y_df$Anomaly)
+
+cat("Theil-Sen Slope (manual implementation)\n")
+cat(strrep("=", 50), "\n")
+cat(sprintf("Slope:     %.6f\n", result_manual$slope))
+cat(sprintf("Intercept: %.6f\n", result_manual$intercept))
+```
+
+```{r slopes-distribution}
+# Plot the distribution of pairwise slopes
+ggplot(data.frame(slope = result_manual$all_slopes), aes(x = slope)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 30, fill = "forestgreen", alpha = 0.6) +
+  labs(
+    title = "Distribution of Pairwise Slopes (Theil-Sen)",
+    x = "Slope", y = "Density"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+Now let us compare with the [`mblm`](https://cran.r-project.org/package=mblm) package, which fits a median-based linear model (Theil-Sen estimator) and provides confidence intervals.
+
+```{r theil-sen-mblm}
+# Theil-Sen regression using mblm
+ts_model <- mblm(Anomaly ~ Year, data = y_df)
+ts_summary <- summary(ts_model)
+
+cat("Theil-Sen Slope (mblm package)\n")
+cat(strrep("=", 50), "\n")
+cat(sprintf("Slope:              %.6f\n", coef(ts_model)["Year"]))
+cat(sprintf("Intercept:          %.6f\n", coef(ts_model)["(Intercept)"]))
+
+# Confidence intervals
+ci <- confint(ts_model, level = 0.95)
+cat(sprintf("95%% CI lower slope: %.6f\n", ci["Year", 1]))
+cat(sprintf("95%% CI upper slope: %.6f\n", ci["Year", 2]))
+```
+
+Let us visualize the Theil-Sen trend line overlaid on the data.
+
+```{r trend-plot}
+ts_slope <- coef(ts_model)["Year"]
+ts_intercept <- coef(ts_model)["(Intercept)"]
+ci_slopes <- confint(ts_model, level = 0.95)
+
+y_df$fitted <- ts_intercept + ts_slope * y_df$Year
+y_df$ci_lower <- ts_intercept + ci_slopes["Year", 1] * y_df$Year
+y_df$ci_upper <- ts_intercept + ci_slopes["Year", 2] * y_df$Year
+
+ggplot(y_df, aes(x = Year, y = Anomaly)) +
+  geom_point(size = 1, alpha = 0.6) +
+  geom_line(aes(y = fitted), color = "red", linewidth = 1) +
+  geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper), alpha = 0.2, fill = "red") +
+  labs(
+    title = "Theil-Sen Slope Estimator on Temperature Anomaly Data",
+    x = "Time", y = expression(y[t])
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+***
+
+### Comparison: Theil-Sen Slope vs. Ordinary Least Squares (OLS)
+
+A key advantage of the Theil-Sen estimator is its robustness to outliers. Let us demonstrate this by adding artificial outliers to the data.
+
+```{r outlier-comparison}
+# Add outliers to a copy of the data
+y_outliers <- y_df$Anomaly
+outlier_indices <- c(11, 31, 51, 71, 91)  # R is 1-indexed
+y_outliers[outlier_indices] <- y_outliers[outlier_indices] + c(8, -10, 12, -9, 11)
+
+# OLS regression (least squares)
+ols_fit <- lm(Anomaly ~ Year, data = y_df)
+ols_fit_outlier <- lm(y_outliers ~ y_df$Year)
+
+# Theil-Sen slope
+ts_fit <- mblm(Anomaly ~ Year, data = y_df, repeated = FALSE)
+
+y_df_outlier <- data.frame(Year = y_df$Year, Anomaly = y_outliers)
+ts_fit_outlier <- mblm(Anomaly ~ Year, data = y_df_outlier, repeated = FALSE)
+
+cat("Comparison with outliers\n")
+cat(strrep("=", 50), "\n")
+cat(sprintf(
+  "OLS slope:        %.6f | OLS slope with outliers:       %.6f\n",
+  coef(ols_fit)["Year"], coef(ols_fit_outlier)[2]
+))
+cat(sprintf(
+  "Theil-Sen slope:  %.6f | Theil-Sen slope with outliers: %.6f\n",
+  coef(ts_fit)["Year"], coef(ts_fit_outlier)["Year"]
+))
+```
+
+
+```{r outlier-plots, fig.height=10}
+par(mfrow = c(2, 1), mar = c(4, 4, 3, 1))
+
+# Without outliers
+plot(y_df$Year, y_df$Anomaly, pch = 16, cex = 0.6, col = rgb(0, 0, 0, 0.6),
+     main = "Without Outliers", xlab = "Time", ylab = expression(y[t]))
+abline(ts_fit, col = "red", lwd = 2)
+abline(ols_fit, col = "blue", lwd = 2, lty = 2)
+legend("topleft",
+  legend = c(
+    sprintf("Theil-Sen: %.4f", coef(ts_fit)["Year"]),
+    sprintf("OLS: %.4f", coef(ols_fit)["Year"])
+  ),
+  col = c("red", "blue"), lwd = 2, lty = c(1, 2)
+)
+grid()
+
+# With outliers
+plot(y_df$Year, y_outliers, pch = 16, cex = 0.6, col = rgb(0, 0, 0, 0.6),
+     main = "With Outliers", xlab = "Time", ylab = expression(y[t]))
+abline(ts_fit_outlier, col = "red", lwd = 2)
+abline(ols_fit_outlier, col = "blue", lwd = 2, lty = 2)
+points(y_df$Year[outlier_indices], y_outliers[outlier_indices],
+       pch = 4, cex = 2, lwd = 2)
+legend("topleft",
+  legend = c(
+    sprintf("Theil-Sen: %.4f", coef(ts_fit_outlier)["Year"]),
+    sprintf("OLS: %.4f", coef(ols_fit_outlier)[2]),
+    "Outliers"
+  ),
+  col = c("red", "blue", "black"), lwd = 2, lty = c(1, 2, NA),
+  pch = c(NA, NA, 4)
+)
+grid()
+
+mtext("Theil-Sen Slope vs. OLS Regression: Robustness to Outliers",
+      outer = TRUE, line = -1.5, cex = 1.3)
+```
+
+Note how the value of the OLS slope changes dramatically with the introduction of outliers, while the Theil-Sen slope remains relatively stable, illustrating its robustness.
+
+***
+
+### When to use which test?
+
+The `trend` package offers several variants of the Mann-Kendall test:
+
+| Test Function          | Use case |
+|------------------------|----------|
+| `mk.test`              | Standard Mann-Kendall test for independent data |
+| `smk.test`             | Seasonal Mann-Kendall test for data with a seasonal component |
+| `correlated.season.test` | Seasonal test accounting for cross-correlation between seasons |
+| `partial.mk.test`      | Partial Mann-Kendall test controlling for a covariate |
+| `ww.test`              | Wald-Wolfowitz test for randomness |
+
+When autocorrelation is present, the standard Mann-Kendall test may overestimate the significance of the trend. Let us check for autocorrelation and apply the corrected test.
+
+```{r acf-plot}
+acf(y_ts, lag.max = 30, main = "Autocorrelation — Global Annual Temperature Anomalies")
+```
+
+```{r mk-corrected}
+# For autocorrelation-corrected Mann-Kendall, use the trend package's
+# modified test or apply pre-whitening
+
+# Using the Yue-Wang modified Mann-Kendall test from the modifiedmk package
+# install.packages("modifiedmk")  # if not installed
+library(modifiedmk)
+
+mk_modified <- mmky(y_df$Anomaly)
+
+cat("Modified Mann-Kendall Test (Yue-Wang)\n")
+cat(strrep("=", 50), "\n")
+cat(sprintf("Z statistic:    %.4f\n", mk_modified["Corrected Zc"]))
+cat(sprintf("p-value:        %.6e\n", mk_modified["new P-value"]))
+cat(sprintf("Kendall's tau:  %.4f\n", mk_modified["Tau"]))
+cat(sprintf("Sen's slope:    %.6f °C/year\n", mk_modified["Sen's slope"]))
+cat("\n")
+cat("Comparison with original test:\n")
+cat(sprintf("  Original p-value:  %.6e\n", mk_result$p.value))
+cat(sprintf("  Modified p-value:  %.6e\n", mk_modified["new P-value"]))
+```
+
+***
+
+### Exercises
+
+> **Exercise 1:** Load the Antarctica ice core $CO_2$ data from the URL below. Apply the Mann-Kendall test and Theil-Sen slope. Interpret the results.
+>
+> URL: `http://userpage.fu-berlin.de/soga/soga-py/300/307000_time_series/Antartica_Ice_Core.json`
+
+```{r exercise-1}
+## Your code here ...
+```
+
+> **Exercise 2:** Generate a synthetic time series with a **decreasing** trend (e.g., slope = $-0.03$). Apply the Mann-Kendall test and verify that it correctly identifies the direction of the trend. Plot the result with the Theil-Sen trend line.
+
+```{r exercise-2}
+## Your code here ...
+```
+
+> **Exercise 3:** Investigate how sample size affects the power of the Mann-Kendall test. Generate synthetic data with a weak trend (slope = $0.01$) for sample sizes $n = 20, 50, 100, 200, 500$. For each, run the test 1000 times with different random noise, and compute the fraction of times the test correctly rejects $H_0$. Plot the rejection rate as a function of $n$.
+
+```{r exercise-3}
+## Your code here ...
+```
+
+***
+
+### Summary
+
+* The **Mann-Kendall test** is a non-parametric test for detecting monotonic trends in time series. It does not assume normality and is robust to outliers and missing data.
+* The **Theil-Sen slope** provides a robust estimate of the trend magnitude. Unlike OLS, it is resistant to outliers.
+* When the data exhibits **autocorrelation**, modified versions of the Mann-Kendall test (e.g., Yue-Wang) should be used to avoid inflated significance.
+* Both methods are widely used in environmental and geoscientific applications for trend detection in temperature, precipitation, streamflow, and other variables.
+
+***
+
+```{r citation, echo=FALSE, results='asis'}
+citation_html <- readLines(
+  "https://userpage.fu-berlin.de/soga/soga-py/citation/citation_py.html",
+  warn = FALSE
+)
+cat(paste(citation_html, collapse = "\n"))
+```
